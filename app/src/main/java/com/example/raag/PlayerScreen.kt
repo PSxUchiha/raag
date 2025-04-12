@@ -2,10 +2,7 @@ package com.example.raag
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -20,10 +17,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -49,30 +45,25 @@ fun PlayerScreen(
     val density = LocalDensity.current
 
     // Animation state for swipe down
-    var offsetY by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableStateOf(0f) }
     var isDraggingDown by remember { mutableStateOf(false) }
-    var alphaState by remember { mutableFloatStateOf(1f) }
+    var alphaState by remember { mutableStateOf(1f) }
 
     // Calculate screen height for animation thresholds
     val screenHeight = with(density) {
         androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp.toPx()
     }
 
-    // Threshold where mini-player starts to appear (20% down the screen - reduced from 40%)
-    val miniPlayerThreshold = screenHeight * 0.2f
+    val screenWidth = with(density) {
+        androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp.toPx()
+    }
+
+    // Threshold where mini-player starts to appear (40% down the screen)
+    val miniPlayerThreshold = screenHeight * 0.4f
 
     // Calculate mini-player visibility and offset
-    val miniPlayerAlpha = (offsetY / (miniPlayerThreshold * 0.5f)).coerceIn(0f, 1f)
+    val miniPlayerAlpha = (offsetY / miniPlayerThreshold).coerceIn(0f, 1f)
     val miniPlayerOffsetY = (screenHeight - offsetY).coerceAtLeast(0f)
-
-    // Set up draggable state for more reliable swipe detection
-    val dragState = rememberDraggableState { delta ->
-        if (delta > 0) { // Only allow downward dragging
-            offsetY += delta
-            // Gradually reduce alpha as we drag down
-            alphaState = (1 - (offsetY / (screenHeight * 0.5f))).coerceIn(0f, 1f)
-        }
-    }
 
     // Load the song if not already playing
     LaunchedEffect(songId) {
@@ -98,23 +89,37 @@ fun PlayerScreen(
                     translationY = offsetY
                     alpha = alphaState
                 }
-                .draggable(
-                    state = dragState,
-                    orientation = Orientation.Vertical,
-                    onDragStarted = { isDraggingDown = true },
-                    onDragStopped = { velocity ->
-                        // Use both position and velocity to determine whether to dismiss
-                        if (offsetY > screenHeight * 0.15f || velocity > 300f) {
-                            // Lower threshold (15% of screen) OR velocity-based detection
-                            alphaState = 0f
-                            navController.popBackStack()
-                        } else {
-                            // Spring back with animation
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = {
+                            isDraggingDown = true
+                        },
+                        onDragEnd = {
+                            if (offsetY > screenHeight * 0.3f) {
+                                // Start fade and slide out animation
+                                alphaState = 0f
+                                navController.popBackStack()
+                            } else {
+                                // Spring back if not dragged enough
+                                offsetY = 0f
+                                isDraggingDown = false
+                            }
+                        },
+                        onDragCancel = {
                             offsetY = 0f
                             isDraggingDown = false
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            val (_, y) = dragAmount
+                            if (y > 0) { // Only allow downward dragging
+                                offsetY += y
+                                // Gradually reduce alpha as we drag down
+                                alphaState = (1 - (offsetY / (screenHeight * 0.7f))).coerceIn(0f, 1f)
+                            }
                         }
-                    }
-                )
+                    )
+                }
         ) {
             Scaffold(
                 topBar = {
@@ -134,17 +139,16 @@ fun PlayerScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(paddingValues)
-                        .padding(16.dp),
+                        .padding(paddingValues),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     currentSong?.let { song ->
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Larger Album Art
+                        // Album Art - Enlarged to cover more of the screen (90% of screen width)
                         Box(
                             modifier = Modifier
-                                .size(320.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp)
+                                .aspectRatio(1f) // Keep it square
                                 .clip(RoundedCornerShape(16.dp)),
                             contentAlignment = Alignment.Center
                         ) {
@@ -171,40 +175,44 @@ fun PlayerScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.weight(0.1f)) // Push remaining content down
 
                         // Song Info
-                        Text(
-                            text = song.title,
-                            style = MaterialTheme.typography.headlineMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = song.title,
+                                style = MaterialTheme.typography.headlineMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = song.artist,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                            Text(
+                                text = song.artist,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
 
-                        Text(
-                            text = song.album,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                            Text(
+                                text = song.album,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
 
-                        Spacer(modifier = Modifier.height(24.dp))
+                            Spacer(modifier = Modifier.height(24.dp))
 
-                        // Playback progress controls
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            // Add a Box with an overlay to hide wiggly line glitches at the start
-                            Box(modifier = Modifier.fillMaxWidth()) {
+                            // Playback progress controls
+                            Column(modifier = Modifier.fillMaxWidth()) {
                                 // Wiggly progress with playing state
                                 WigglyLinearProgressIndicator(
                                     progress = currentPosition.toFloat() / song.duration.toFloat(),
@@ -220,44 +228,31 @@ fun PlayerScreen(
                                     }
                                 )
 
-                                // Transparent gradient overlay to hide glitching at the start
-                                Box(
-                                    modifier = Modifier
-                                        .width(16.dp)
-                                        .height(20.dp)
-                                        .background(
-                                            brush = Brush.horizontalGradient(
-                                                colors = listOf(
-                                                    MaterialTheme.colorScheme.background,
-                                                    Color.Transparent
-                                                )
-                                            )
-                                        )
-                                )
-                            }
+                                Spacer(modifier = Modifier.height(8.dp))
 
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = formatDuration(currentPosition),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Text(
-                                    text = formatDuration(song.duration),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = formatDuration(currentPosition),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = formatDuration(song.duration),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(32.dp))
+                        Spacer(modifier = Modifier.weight(0.1f)) // Push controls to bottom
 
-                        // Playback Controls
+                        // Playback Controls - Moved further down for better reachability
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 32.dp),
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -288,6 +283,8 @@ fun PlayerScreen(
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(16.dp)) // Bottom padding
                     } ?: run {
                         Box(
                             modifier = Modifier.fillMaxSize(),
@@ -305,7 +302,6 @@ fun PlayerScreen(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 16.dp)  // Fixed padding to avoid navigation bar
                     .graphicsLayer {
                         alpha = miniPlayerAlpha
                         translationY = miniPlayerOffsetY
@@ -315,8 +311,8 @@ fun PlayerScreen(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(120.dp)  // Increased from 80dp (50% thicker)
-                            .padding(horizontal = 8.dp),
+                            .height(80.dp)
+                            .padding(bottom = 8.dp, start = 8.dp, end = 8.dp),
                         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
                     ) {
                         Column {
@@ -344,7 +340,7 @@ fun PlayerScreen(
                                 // Album art with rounded corners
                                 Box(
                                     modifier = Modifier
-                                        .size(90.dp)  // Larger album art
+                                        .size(64.dp)
                                         .padding(4.dp)
                                         .clip(RoundedCornerShape(8.dp)),
                                     contentAlignment = Alignment.Center
@@ -366,10 +362,9 @@ fun PlayerScreen(
                                 ) {
                                     Text(
                                         text = song.title,
-                                        style = MaterialTheme.typography.titleLarge,  // Larger title
+                                        style = MaterialTheme.typography.titleMedium,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.onSurface  // Dynamic color
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = song.artist,
@@ -379,25 +374,12 @@ fun PlayerScreen(
                                     )
                                 }
 
-                                // Play/pause button with rounded background
-                                Box(
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.primaryContainer)
-                                        .padding(4.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    IconButton(
-                                        onClick = { viewModel.togglePlayPause() },
-                                        modifier = Modifier.fillMaxSize()
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                            contentDescription = if (isPlaying) "Pause" else "Play",
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
-                                    }
+                                // Play/pause button
+                                IconButton(onClick = { viewModel.togglePlayPause() }) {
+                                    Icon(
+                                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = if (isPlaying) "Pause" else "Play"
+                                    )
                                 }
                             }
                         }

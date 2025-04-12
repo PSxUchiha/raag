@@ -8,20 +8,41 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,6 +67,24 @@ fun MiniPlayer(
     val miniPlayerHeight = 120.dp
     val miniPlayerHeightPx = with(density) { miniPlayerHeight.toPx() }
 
+    // Calculate screen height for swipe thresholds
+    val screenHeight = with(density) {
+        LocalConfiguration.current.screenHeightDp.dp.toPx()
+    }
+
+    // Track swipe-up gesture state
+    var swipeUpOffset by remember { mutableFloatStateOf(0f) }
+    var isDraggingUp by remember { mutableStateOf(false) }
+
+    // Threshold for transitioning to player screen (30% of screen height)
+    val swipeUpThreshold = screenHeight * 0.3f
+
+    // Calculate opacity for mini-player during swipe-up
+    val miniPlayerAlpha = if (isDraggingUp) {
+        (1f - (swipeUpOffset / swipeUpThreshold).coerceIn(0f, 1f))
+    } else 1f
+
+    // Calculate animation offset for swipe-down from player
     val miniPlayerOffset by animateFloatAsState(
         targetValue = if (playerScreenOffset > 0f) playerScreenOffset else 0f,
         label = "miniPlayerOffset"
@@ -57,6 +96,12 @@ fun MiniPlayer(
             viewModel.updatePosition()
             kotlinx.coroutines.delay(100)
         }
+    }
+
+    // Reset swipe state when navigating
+    LaunchedEffect(currentSong) {
+        swipeUpOffset = 0f
+        isDraggingUp = false
     }
 
     AnimatedVisibility(
@@ -72,21 +117,44 @@ fun MiniPlayer(
                 .fillMaxWidth()
                 .height(miniPlayerHeight)
                 .padding(horizontal = 8.dp)
+                .graphicsLayer {
+                    // Apply transformations for swipe-up animation
+                    translationY = -swipeUpOffset
+                    alpha = miniPlayerAlpha
+                }
                 .clickable {
                     currentSong?.let { song ->
                         navController.navigate("player/${song.id}")
                     }
                 }
                 .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        val (_, y) = dragAmount
-                        if (y < -50) { // Swipe up
-                            currentSong?.let { song ->
-                                navController.navigate("player/${song.id}")
+                    detectDragGestures(
+                        onDragStart = { isDraggingUp = true },
+                        onDragEnd = {
+                            // Determine whether to navigate based on threshold
+                            if (swipeUpOffset > swipeUpThreshold) {
+                                currentSong?.let { song ->
+                                    // Navigate to player screen with fade animation
+                                    navController.navigate("player/${song.id}")
+                                }
+                            }
+                            // Reset state when gesture ends
+                            swipeUpOffset = 0f
+                            isDraggingUp = false
+                        },
+                        onDragCancel = {
+                            // Reset state on cancel
+                            swipeUpOffset = 0f
+                            isDraggingUp = false
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            val (_, y) = dragAmount
+                            if (y < 0) { // Only detect upward motion
+                                swipeUpOffset = (swipeUpOffset - y).coerceIn(0f, swipeUpThreshold * 1.2f)
                             }
                         }
-                    }
+                    )
                 },
             elevation = CardDefaults.cardElevation(
                 defaultElevation = 6.dp
@@ -153,6 +221,7 @@ fun MiniPlayer(
                             )
                         }
 
+                        // Play/pause button with rounded background
                         Box(
                             modifier = Modifier
                                 .size(48.dp)
@@ -172,10 +241,23 @@ fun MiniPlayer(
                                 )
                             }
                         }
-
                     }
                 }
             }
         }
+    }
+
+    // Show a fading overlay for the Now Playing screen transition
+    if (isDraggingUp && swipeUpOffset > 0) {
+        // This overlay appears as the mini player is swiped up
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = (swipeUpOffset / swipeUpThreshold).coerceIn(0f, 0.95f)
+                }
+                .background(MaterialTheme.colorScheme.background)
+                .zIndex(0.5f)
+        )
     }
 }
