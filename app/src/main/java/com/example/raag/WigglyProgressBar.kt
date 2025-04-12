@@ -113,7 +113,7 @@ fun WigglyLinearProgressIndicator(
         if (progressState > 0f) {
             val path = Path()
             val amplitude = height * amplitudeState  // Animated amplitude
-            val frequency = 0.08f
+            val frequency = 0.05f
             val lineThickness = height * 0.3f
 
             // Start the path slightly inside the boundary
